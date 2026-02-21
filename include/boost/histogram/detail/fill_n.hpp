@@ -37,6 +37,24 @@ namespace detail {
 
 namespace dtl = boost::histogram::detail;
 
+// Wrapper for precomputed bin indices that skip axis.index() computation.
+// When filling with categorical data (e.g., awkward categorical arrays),
+// bin indices can be precomputed in Python and passed directly, avoiding
+// expensive per-element axis.index() calls.
+struct precomputed_bin_indices {
+    const int* data_;
+    std::size_t size_;
+
+    precomputed_bin_indices(const int* d, std::size_t s) : data_(d), size_(s) {}
+
+    const int* data() const noexcept { return data_; }
+    std::size_t size() const noexcept { return size_; }
+
+    // Iterator interface for is_iterable detection
+    const int* begin() const noexcept { return data_; }
+    const int* end() const noexcept { return data_ + size_; }
+};
+
 template <class Axes, class T>
 using is_convertible_to_any_value_type =
     mp11::mp_any_of_q<value_types<Axes>, mp11::mp_bind_front<std::is_convertible, T>>;
@@ -141,6 +159,24 @@ struct index_visitor {
     call_1(mp11::mp_bool<(std::is_convertible<T, value_type>::value ||
                           !is_iterable<T>::value)>{},
            iterable_or_value);
+  }
+
+  // Explicit overload for precomputed bin indices.
+  // These are already bin indices, so we skip axis.index() and use them directly.
+  void operator()(const precomputed_bin_indices& pi) const {
+    // For non-growing axes, apply precomputed indices directly
+    // Note: Growing axes are not supported with precomputed indices
+    const int* ptr = pi.data() + start_;
+    for (auto it = begin_; it != begin_ + size_; ++it) {
+      const auto idx = *ptr++;
+      // Check bounds: idx < 0 means invalid/underflow, idx >= axis_.size() means overflow
+      // For axes with flow bins, the precomputed index should already account for this
+      if (idx >= 0) {
+        *it += static_cast<std::size_t>(idx) * stride_;
+      } else {
+        *it = invalid_index;
+      }
+    }
   }
 };
 
