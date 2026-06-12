@@ -20,6 +20,7 @@
 #include <boost/histogram/detail/optional_index.hpp>
 #include <boost/histogram/detail/static_if.hpp>
 #include <boost/histogram/fwd.hpp>
+#include <boost/histogram/weight.hpp>
 #include <boost/mp11/algorithm.hpp>
 #include <boost/mp11/bind.hpp>
 #include <boost/mp11/utility.hpp>
@@ -37,22 +38,25 @@ namespace detail {
 
 namespace dtl = boost::histogram::detail;
 
-// Wrapper for precomputed bin indices that skip axis.index() computation.
-// When filling with categorical data (e.g., awkward categorical arrays),
-// bin indices can be precomputed in Python and passed directly, avoiding
-// expensive per-element axis.index() calls.
+// Non-owning view of precomputed axis indices, which can be passed to fill
+// instead of values to skip the index computation for an axis. Useful when
+// the caller can obtain the indices more efficiently than through repeated
+// index lookups, e.g. for categorical data which is already dictionary-
+// encoded (K unique values and N integer codes): the axis needs to be
+// queried only K times instead of N times.
 struct precomputed_bin_indices {
-    const int* data_;
-    std::size_t size_;
+  const axis::index_type* data_;
+  std::size_t size_;
 
-    precomputed_bin_indices(const int* d, std::size_t s) : data_(d), size_(s) {}
+  precomputed_bin_indices(const axis::index_type* d, std::size_t s)
+      : data_(d), size_(s) {}
 
-    const int* data() const noexcept { return data_; }
-    std::size_t size() const noexcept { return size_; }
+  const axis::index_type* data() const noexcept { return data_; }
+  std::size_t size() const noexcept { return size_; }
 
-    // Iterator interface for is_iterable detection
-    const int* begin() const noexcept { return data_; }
-    const int* end() const noexcept { return data_ + size_; }
+  // iterator interface for is_iterable detection
+  const axis::index_type* begin() const noexcept { return data_; }
+  const axis::index_type* end() const noexcept { return data_ + size_; }
 };
 
 template <class Axes, class T>
@@ -161,22 +165,37 @@ struct index_visitor {
            iterable_or_value);
   }
 
-  // Explicit overload for precomputed bin indices.
-  // These are already bin indices, so we skip axis.index() and use them directly.
+  template <class Axis2>
+  void call_precomputed(const Axis2& ax, const axis::index_type* ptr) const {
+    // equivalent of call_2 with the index computation skipped; the
+    // option-masked linearize applies the same validity rules as for values
+    constexpr auto opts = axis::traits::get_options<Axis2>{} &
+                          (axis::option::underflow | axis::option::overflow);
+    const auto size = ax.size();
+    for (auto it = begin_; it != begin_ + size_; ++it)
+      linearize(opts, *it, stride_, size, *ptr++);
+  }
+
+  template <class... Ts>
+  void call_precomputed(const axis::variant<Ts...>& ax,
+                        const axis::index_type* ptr) const {
+    // resolve the axis variant once instead of per element
+    axis::visit([this, ptr](const auto& a) { call_precomputed(a, ptr); }, ax);
+  }
+
+  // Overload for precomputed bin indices: the entries are already axis
+  // indices (as returned by axis::traits::index), so the index computation
+  // is skipped; the option-dependent validity rules of linearize still
+  // apply. Out-of-range indices invalidate an entry like an out-of-range
+  // value does, if the axis is not inclusive; for inclusive axes they are a
+  // precondition violation (asserted by linearize), so the caller must
+  // guarantee that only existing bins, including existing flow bins, are
+  // addressed. The axis must not grow during the fill (the caller has to
+  // grow it beforehand if necessary), and an axis with underflow is only
+  // supported if no axis of the histogram is growing, because the growing
+  // code path uses a different index offset convention.
   void operator()(const precomputed_bin_indices& pi) const {
-    // For non-growing axes, apply precomputed indices directly
-    // Note: Growing axes are not supported with precomputed indices
-    const int* ptr = pi.data() + start_;
-    for (auto it = begin_; it != begin_ + size_; ++it) {
-      const auto idx = *ptr++;
-      // Check bounds: idx < 0 means invalid/underflow, idx >= axis_.size() means overflow
-      // For axes with flow bins, the precomputed index should already account for this
-      if (idx >= 0) {
-        *it += static_cast<std::size_t>(idx) * stride_;
-      } else {
-        *it = invalid_index;
-      }
-    }
+    call_precomputed(axis_, pi.data() + start_);
   }
 };
 

@@ -89,6 +89,7 @@ alias cxx14 :
     [ run histogram_custom_axis_test.cpp ]
     [ run histogram_dynamic_test.cpp ]
     [ run histogram_fill_test.cpp ]
+    [ run histogram_fill_precomputed_test.cpp ]
     [ run histogram_growing_test.cpp ]
     [ run histogram_mixed_test.cpp ]
     [ run histogram_operators_test.cpp ]

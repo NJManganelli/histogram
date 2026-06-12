@@ -85,6 +85,7 @@ boost_test(TYPE run SOURCES histogram_custom_axis_test.cpp)
 boost_test(TYPE run SOURCES histogram_dynamic_test.cpp)
 boost_test(TYPE run SOURCES histogram_fill_test.cpp
   COMPILE_OPTIONS $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
+boost_test(TYPE run SOURCES histogram_fill_precomputed_test.cpp)
 boost_test(TYPE run SOURCES histogram_growing_test.cpp)
 boost_test(TYPE run SOURCES histogram_mixed_test.cpp)
 boost_test(TYPE run SOURCES histogram_operators_test.cpp
